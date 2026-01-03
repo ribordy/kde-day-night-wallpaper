@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>KDE Day/Night Wallpaper Packager</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin:40px; }
+        label { display:block; margin-top:1.5em; }
+        .preview { margin-top: 10px; }
+        #download-link { margin-top: 1.5em; display:none; }
+    </style>
+</head>
+<body>
+    <h2>KDE Plasma Day/Night Wallpaper Zip Creator</h2>
+    <form id="wallpaper-form">
+        <label>
+            Pretty Name (Title):
+            <input type="text" id="pretty-name" required maxlength="100">
+        </label>
+        <label>
+            Day Image (PNG, JPG, etc.):
+            <input type="file" id="day-img" accept="image/*" required>
+        </label>
+        <div class="preview"><img id="preview-day" style="max-width:300px; max-height:200px; display:none;"></div>
+        <label>
+            Night Image (PNG, JPG, etc.):
+            <input type="file" id="night-img" accept="image/*" required>
+        </label>
+        <div class="preview"><img id="preview-night" style="max-width:300px; max-height:200px; display:none;"></div>
+        <button type="submit" style="margin-top: 2em;">Create Wallpaper ZIP</button>
+    </form>
+    <a id="download-link" download="wallpaper.zip">Download Wallpaper Zip</a>
+    <div id="error" style="color:#900; margin-top:1em;"></div>
+
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script>
+const form = document.getElementById('wallpaper-form');
+const prettyNameInput = document.getElementById('pretty-name');
+const dayInput = document.getElementById('day-img');
+const nightInput = document.getElementById('night-img');
+const errorDiv = document.getElementById('error');
+const downloadLink = document.getElementById('download-link');
+
+function toKebabCase(str) {
+    return str.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Show image preview
+dayInput.addEventListener('change', e => showPreview(e.target, 'preview-day'));
+nightInput.addEventListener('change', e => showPreview(e.target, 'preview-night'));
+
+function showPreview(input, imgId) {
+    const img = document.getElementById(imgId);
+    if (!input.files.length) { img.style.display = 'none'; return; }
+    const file = input.files[0];
+    const url = URL.createObjectURL(file);
+    img.src = url;
+    img.style.display = '';
+}
+
+// Check if two images have the same dimensions
+async function getImageDimensions(file) {
+    return new Promise((resolve, reject) => {
+        const img = new window.Image();
+        img.onload = () => resolve({ width: img.width, height: img.height });
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+    });
+}
+
+function fileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    errorDiv.textContent = '';
+    downloadLink.style.display = 'none';
+
+    const prettyName = prettyNameInput.value.trim();
+    if (!prettyName) {
+        errorDiv.textContent = 'Please enter a title.';
+        return;
+    }
+    if (!dayInput.files.length || !nightInput.files.length) {
+        errorDiv.textContent = 'Please select both day and night images.';
+        return;
+    }
+    const dayFile = dayInput.files[0];
+    const nightFile = nightInput.files[0];
+
+    // Check image dimensions
+    let dayDim, nightDim;
+    try {
+        [dayDim, nightDim] = await Promise.all([
+            getImageDimensions(dayFile),
+            getImageDimensions(nightFile)
+        ]);
+    } catch (e) {
+        errorDiv.textContent = "Couldn't read image files, please check your images!";
+        return;
+    }
+    if (dayDim.width !== nightDim.width || dayDim.height !== nightDim.height) {
+        errorDiv.textContent = `Images must have the same dimensions. Got ${dayDim.width}x${dayDim.height} and ${nightDim.width}x${nightDim.height}`;
+        return;
+    }
+    const dimensionString = `${dayDim.width}x${dayDim.height}`;
+    const extDay = '.' + dayFile.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/gi,'');
+    const extNight = '.' + nightFile.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/gi,'');
+
+    // Structure
+    const wpId = toKebabCase(prettyName);
+
+    const baseDir = `${wpId}/`;
+    const contentsDir = baseDir + `contents/`;
+    const imgDir = contentsDir + `images/`;
+    const imgDarkDir = contentsDir + `images_dark/`;
+    const metaPath = baseDir + `metadata.json`;
+
+    // Prepare metadata.json
+    const metadata = {
+        "KPackageStructure": "Plasma/Wallpaper",
+        "KPlugin": {
+            "Id": wpId,
+            "Name": prettyName
+        }
+    };
+
+    // Read image files as ArrayBuffers
+    let [dayArrBuf, nightArrBuf] = await Promise.all([
+        fileAsArrayBuffer(dayFile),
+        fileAsArrayBuffer(nightFile)
+    ]);
+
+    // Create zip
+    const zip = new JSZip();
+    zip.file(metaPath, JSON.stringify(metadata, null, 4));
+    zip.folder(imgDir).file(dimensionString + extDay, dayArrBuf);
+    zip.folder(imgDarkDir).file(dimensionString + extNight, nightArrBuf);
+
+    // Generate and show link
+    const blob = await zip.generateAsync({type:'blob'});
+    downloadLink.href = URL.createObjectURL(blob);
+    downloadLink.download = `${wpId}.zip`;
+    downloadLink.style.display = 'inline-block';
+    downloadLink.textContent = `Download "${prettyName}" ZIP`;
+});
+    </script>
+</body>
+</html>
